@@ -1,8 +1,30 @@
-use std::io;
+use std::{io, collections::VecDeque};
 
 use crate::{ring::XskRingProd, socket::Fd};
 
 use super::{frame::FrameDesc, Umem};
+
+/// produce frames to be fed into the fill queue
+pub trait FrameDescProducer {
+    /// the number of frames available to be produced
+    fn available(&self) -> u32;
+
+    /// produce the next frame descriptor
+    /// 
+    /// if the this does not produce at least `available()` frames, the program
+    /// may abort
+    fn produce_next(&mut self) -> Option<FrameDesc>;
+}
+
+impl<'a> FrameDescProducer for (u32, &'a mut VecDeque<FrameDesc>) {
+    fn available(&self) -> u32 {
+        self.0
+    }
+
+    fn produce_next(&mut self) -> Option<FrameDesc> {
+        self.1.pop_front()
+    }
+}
 
 /// Used to transfer ownership of [`Umem`](super::Umem) frames from
 /// user-space to kernel-space.
@@ -22,6 +44,70 @@ impl FillQueue {
     pub(crate) fn new(ring: XskRingProd, umem: Umem) -> Self {
         Self { ring, _umem: umem }
     }
+
+    /// Let the kernel know that the [`Umem`] frames described by
+    /// `descs` may be used to receive data. Returns the number of
+    /// frames submitted to the kernel.
+    ///
+    /// Note that if the length of `descs` is greater than the number
+    /// of available spaces on the underlying ring buffer then no
+    /// frames at all will be handed over to the kernel.
+    ///
+    /// Once the frames have been submitted to this queue they should
+    /// not be used again until consumed via the [`RxQueue`].
+    /// 
+    /// # Abort
+    /// 
+    /// This funcion will abort if the `descs` iterator fails to produce the
+    /// correct number of frames. This is required because the there is no
+    /// correcting the situation, and an attempt to handle a panic where to
+    /// allow the process to continue, undefined behavior would occur.
+    /// 
+    /// # Safety
+    ///
+    /// This function is unsafe as it is possible to cause a data race
+    /// if used improperly. For example, by simultaneously submitting
+    /// the same frame descriptor to this `FillQueue` and the
+    /// [`TxQueue`].
+    ///
+    /// Furthermore, the frames passed to this queue must belong to
+    /// the same [`Umem`] that this `FillQueue` instance is tied to.
+    ///
+    /// [`TxQueue`]: crate::TxQueue
+    /// [`RxQueue`]: crate::RxQueue
+    pub unsafe fn produce2(&mut self, mut descs: impl FrameDescProducer) -> usize {
+
+        let descs_len = descs.available();
+
+        if descs_len == 0 {
+            return 0;
+        }
+
+        let mut base = 0;
+
+        let cnt = unsafe { libbpf_sys::_xsk_ring_prod__reserve(self.ring.as_mut(), descs_len as u64, &mut base) };
+
+        if cnt > 0 {
+
+            for idx in 0..(cnt as u32) {
+                let Some(desc) = descs.produce_next() else {
+                    eprintln!("frame producer lied about it's availibility!");
+                    std::process::abort();
+                };
+
+                unsafe {
+                    *libbpf_sys::_xsk_ring_prod__fill_addr(self.ring.as_mut(), base + idx) =
+                        desc.addr as u64
+                };
+            }
+
+            unsafe { libbpf_sys::_xsk_ring_prod__submit(self.ring.as_mut(), cnt) };
+        }
+
+        cnt as usize
+
+    }
+
 
     /// Let the kernel know that the [`Umem`] frames described by
     /// `descs` may be used to receive data. Returns the number of

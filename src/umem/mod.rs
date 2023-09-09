@@ -7,7 +7,7 @@ pub mod frame;
 use frame::{Data, DataMut, FrameDesc, Headroom, HeadroomMut};
 
 mod fill_queue;
-pub use fill_queue::FillQueue;
+pub use fill_queue::{FillQueue, FrameDescProducer};
 
 mod comp_queue;
 pub use comp_queue::CompQueue;

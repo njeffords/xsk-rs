@@ -1,6 +1,6 @@
 //! A wrapper for convenient writing to a [`Umem`](crate::umem::Umem) frame.
 
-use std::io::{self, IoSlice, Write};
+use std::{io::{self, IoSlice, Write}, ops::Range};
 
 use crate::util;
 
@@ -38,6 +38,11 @@ impl<'a> Cursor<'a> {
     #[inline]
     pub fn buf_len(&mut self) -> usize {
         self.buf.len()
+    }
+
+    /// get mutable access to a slice of the underlying buffer
+    pub fn slice(&mut self, range: Range<usize>) -> &mut [u8] {
+        &mut self.buf[range]
     }
 
     /// Fills the buffer with zeroes and sets the cursor's write
