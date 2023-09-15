@@ -22,6 +22,14 @@ impl<'a> Cursor<'a> {
         Self { pos, buf }
     }
 
+    /// reborrow cursor
+    /// 
+    /// this allows you to lend a cursor to a function without giving up the
+    /// current one, and without a double indirection
+    pub fn borrow_mut<'s>(&'s mut self) -> Cursor<'s> {
+        Cursor::<'s> { pos:self.pos, buf:self.buf }
+    }
+
     /// The cursor's current write position in the buffer.
     #[inline]
     pub fn pos(&self) -> usize {
